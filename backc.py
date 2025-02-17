@@ -40,7 +40,6 @@ def prigusivac(pivot_point, kotac_polozaj, kut_prigusivac):
 
 polozaj_prigusivaca = []
 
-# Loop over swing arm pivot points
 for pivot_x in pivot_rangex:
     for pivot_y in pivot_rangey:
         pivot_point = (pivot_x, pivot_y)
@@ -49,15 +48,12 @@ for pivot_x in pivot_rangex:
             prigusivac_pocetak, prigusivac_kraj = prigusivac(pivot_point, zadnji_kotac_polozaj, kut_prigusivac)
             polozaj_prigusivaca.append((pivot_point, zadnji_kotac_polozaj, prigusivac_pocetak,prigusivac_kraj, kut_prigusivac))
 
-# Plot the results
 plt.figure(figsize=(10, 6))
 for i, (pivot_point, zadnji_kotac_polozaj, prigusivac_pocetak, prigusivac_kraj, kut_prigusivac) in enumerate(polozaj_prigusivaca):
     plt.plot([pivot_point[0], zadnji_kotac_polozaj[0]], [pivot_point[1], zadnji_kotac_polozaj[1]], 'b-', label="Swing Arm" if i == 0 else "")
     
-    # Plot rear wheel
     plt.scatter(zadnji_kotac_polozaj[0], zadnji_kotac_polozaj[1], color='green', label="Rear Wheel" if i == 0 else "")
     
-    # Plot damper
     plt.plot([prigusivac_pocetak[0], prigusivac_kraj[0]], [prigusivac_pocetak[1], prigusivac_kraj[1]], 'r', label=f"Damper ({np.degrees(kut_prigusivac):.1f}°)" if i == 0 else "")
 
 
