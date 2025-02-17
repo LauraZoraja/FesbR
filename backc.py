@@ -6,15 +6,15 @@ swingl = 500  # Swing arm length in mm
 ovjesp = np.array([0, 0])  # Front suspension point (x, y)
 kotac_radijus = 300  # Radius of the rear wheel path in mm
 swing_kut = np.radians(30)  # Initial angle of the swing arm in radians
-pivot_rangex = np.linspace(-20, 20, 5)  # Range of swing arm pivot points (x-coordinate)
-pivot_rangey = np.linspace(-10, 10, 5)  # Range of swing arm pivot points (y-coordinate)
+pivot_rangex = np.linspace(-20, 20, 1)  # Range of swing arm pivot points (x-coordinate)
+pivot_rangey = np.linspace(-10, 10, 1)  # Range of swing arm pivot points (y-coordinate)
 prigusivac_kutr = np.linspace(np.radians(30), np.radians(60), 5)  # Range of damper angles
 prigusivacl = 300  # Length of the damper line for visualization
 
 # Triangle sides (a, b, c) ranges
-rangeA = np.linspace(100, 300, 5)  # Range for side a of the triangle
-rangeB = np.linspace(100, 300, 5)  # Range for side b of the triangle
-rangeC = np.linspace(100, 300, 5)  # Range for side c of the triangle
+rangeA = np.linspace(100, 300, 1)  # Range for side a of the triangle
+rangeB = np.linspace(100, 300, 1)  # Range for side b of the triangle
+rangeC = np.linspace(100, 300, 1)  # Range for side c of the triangle
 
 # Function to calculate the position of the rear wheel
 def zadnji_kotac(pivot_point, kut):
