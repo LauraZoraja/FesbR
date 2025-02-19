@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from math import cos, sin, radians, degrees, sqrt, atan2
 
-# Constants
 FRONT_SUSPENSION_POINT = np.array([0, 0])
 REAR_WHEEL_POSITION = np.array([1.5, 0])
 
@@ -77,10 +76,8 @@ def plot_suspension(pivot_point, rear_wheel_pos, point_A, point_B, point_C, damp
     plt.axis('equal')
     plt.show()
 
-# Generate pivot points
 pivot_points = [np.array([0.4 + 0.1 * i, -0.5 - 0.1 * i]) for i in range(5)]
 
-# Simulate suspension for each variation
 for variation in ["fixed_length", "fixed_angle"]:
     print(f"\nVariation: {variation}")
     max_damper_value = -float('inf')
@@ -119,12 +116,12 @@ for variation in ["fixed_length", "fixed_angle"]:
         print(f"Pivot point with the largest damper length ({max_damper_value}): {max_damper_pivot}")
         print(f"Pivot point with the smallest damper length ({min_damper_value}): {min_damper_pivot}")
 
-    # Plot the configuration with the largest damper angle or longest damper length
+    # Largest damper angle or longest damper length
     if max_damper_pivot is not None:
         swing_arm_angle, pivot_point, side_BC, side_AC, side_AB, damper_endpoint, damper_angle, damper_length, rear_wheel_pos, point_A, point_B, point_C = max_damper_config
         plot_suspension(pivot_point, rear_wheel_pos, point_A, point_B, point_C, damper_endpoint, variation, title_suffix="(Max Damper Value)")
 
-    # Plot the configuration with the smallest damper angle or shortest damper length
+    # Smallest damper angle or shortest damper length
     if min_damper_pivot is not None:
         swing_arm_angle, pivot_point, side_BC, side_AC, side_AB, damper_endpoint, damper_angle, damper_length, rear_wheel_pos, point_A, point_B, point_C = min_damper_config
         plot_suspension(pivot_point, rear_wheel_pos, point_A, point_B, point_C, damper_endpoint, variation, title_suffix="(Min Damper Value)")
