@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import differential_evolution
-import random
 
 # parameters
 k_spring = 15000  # N/m
@@ -56,18 +55,18 @@ def linkage_velocity_fit(all_vars):
 # bounds
 bounds = [
     (0.09, 0.145),   # x1 - frame width
-    (-0.015, 0.045), # x2 - pivot offset
+    (-0.015, 0.09), # x2 - pivot offset
     (0.01, 0.045),   # x3 - swingarm
-    (-0.01, 0.05),   # x4 - rocker arm length
+    (-0.01, 0.09),   # x4 - rocker arm length
     (0.06, 0.10),    # x5 - extension to damper
     (0.06, 0.11),    # x6 - rear chassis link
     (-0.08, 0.0),    # Fx
-    (0.0, 0.04),     # Fy
+    (0.0, 0.025),     # Fy
 ]
 
 # run optimization 
 print("Optimizing geometry and F location for damper performance (linear target)...")
-result = differential_evolution(linkage_velocity_fit, bounds, seed=42, maxiter=150, disp=True)
+result = differential_evolution(linkage_velocity_fit, bounds, seed=42, maxiter=300, disp=True)
 opt_vars = result.x
 opt_params = opt_vars[:6]
 opt_F = opt_vars[6:]
@@ -84,6 +83,24 @@ plt.plot(t_vals, v_opt, label='Optimized velocity', color='blue')
 plt.xlabel("Time [s]")
 plt.ylabel("Damper Velocity [m/s]")
 plt.title("Final Optimized Damper Velocity vs Target (Linear)")
+plt.grid()
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# forces
+stroke = EF_opt - EF_opt[0]
+F_spring = k_spring * stroke
+F_damper = c_damper * v_opt
+F_total = F_spring + F_damper
+
+plt.figure(figsize=(10, 5))
+plt.plot(t_vals, F_total, label='Total Damper Force [N]', color='green')
+plt.plot(t_vals, F_spring, '--', label='Spring Force [N]', color='red')
+plt.plot(t_vals, F_damper, '--', label='Damping Force [N]', color='blue')
+plt.xlabel("Time [s]")
+plt.ylabel("Force [N]")
+plt.title("Forces Acting on the Damper Over Time")
 plt.grid()
 plt.legend()
 plt.tight_layout()
