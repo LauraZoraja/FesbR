@@ -1,107 +1,129 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import differential_evolution
+import random
 
-# === Parametri sustava ===
+# parameters
 k_spring = 15000  # N/m
 c_damper = 1500   # Ns/m
-t_total = 2       # trajanje simulacije [s]
-A = np.array([0, 0])
-D = np.array([0.115, 0.0])
-F = np.array([-0.04, 0.02])  # fiksna točka na šasiji
+t_total = 2       # s
 
-# === Geometrijski parametri 4-bar mehanizma (Uni-Trak) ===
-x1, x2, x3, x4, x5, x6 = 0.1, 0.02, 0.015, -0.01, 0.09, 0.08
-params = [x1, x2, x3, x4, x5, x6]
-
-# === Kinematika zakretanja vilice ===
+# motion range 
 phi2_range = np.deg2rad(np.linspace(80, 105, 100))
 t_vals = np.linspace(0, t_total, len(phi2_range))
 
-# === Simulacija gibanja i sila ===
-EF_distances, EF_velocities, forces = [], [], []
-prev_EF, prev_time = None, None
+# kinematics
+def calculate_positions(phi2, params):
+    x1, x2, x3, x4, x5, x6 = params
+    A = np.array([0, 0])
+    B_ = A + np.array([x1, 0])
+    B  = B_ + x2 * np.array([np.cos(phi2), np.sin(phi2)])
+    C  = B  + x5 * np.array([np.cos(phi2), np.sin(phi2)])
+    E_ = C  + x3 * np.array([np.cos(phi2 + np.pi/2), np.sin(phi2 + np.pi/2)])
+    E  = E_ + x4 * np.array([np.cos(phi2 + np.pi), np.sin(phi2 + np.pi)])
+    return E
 
-for phi2, t in zip(phi2_range, t_vals):
-    B_ = A + [x1, 0]
-    B  = B_ + [x2 * np.cos(phi2), x2 * np.sin(phi2)]
-    C  = B  + [x5 * np.cos(phi2), x5 * np.sin(phi2)]
-    E_ = C  + [x3 * np.cos(phi2 + np.pi / 2), x3 * np.sin(phi2 + np.pi / 2)]
-    E  = E_ + [x4 * np.cos(phi2 + np.pi), x4 * np.sin(phi2 + np.pi)]
-    
-    EF = np.linalg.norm(E - F)
-    EF_distances.append(EF)
+# target velocity profile
+def desired_velocity_profile(t_vals, profile='quadratic'):
+    if profile == 'linear':
+        return 0.05 + 0.1 * (t_vals / t_vals[-1])
+    elif profile == 'quadratic':
+        return 0.05 + 0.1 * (t_vals / t_vals[-1])**2
+    else:
+        raise ValueError("Unsupported profile type")
 
-    v = (EF - prev_EF) / (t - prev_time) if prev_EF is not None else 0
-    EF_velocities.append(v)
+# use a linear profile
+v_target = desired_velocity_profile(t_vals, profile='linear')
 
-    x_compression = EF - EF_distances[0]
-    F_total = k_spring * x_compression + c_damper * v
-    forces.append(F_total)
+# linkage fit to target velocity
+def linkage_velocity_fit(all_vars):
+    x1, x2, x3, x4, x5, x6, Fx, Fy = all_vars
+    params = [x1, x2, x3, x4, x5, x6]
+    F_point = np.array([Fx, Fy])
 
-    prev_EF, prev_time = EF, t
+    try:
+        EF_distances = np.array([np.linalg.norm(calculate_positions(phi, params) - F_point) for phi in phi2_range])
+    except:
+        return np.inf
 
-# === Prikaz rezultata ===
-phi_deg = np.rad2deg(phi2_range)
-fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    if np.any(np.isnan(EF_distances)) or np.any(np.isinf(EF_distances)):
+        return np.inf
 
-ax[0].plot(phi_deg, EF_distances, label='Duljina EF (opruge)', color='green')
-ax[0].set_ylabel("Duljina [m]")
-ax[0].legend()
-ax[0].grid()
+    velocities = np.gradient(EF_distances, t_vals)
+    mse = np.mean((velocities - v_target)**2)
+    return mse
 
-ax[1].plot(phi_deg, forces, label='Sila u opruzi + prigušivaču', color='red')
-ax[1].set_xlabel("Kut stražnje vilice [°]")
-ax[1].set_ylabel("Sila [N]")
-ax[1].legend()
-ax[1].grid()
+# bounds
+bounds = [
+    (0.09, 0.145),   # x1 - frame width
+    (-0.015, 0.045), # x2 - pivot offset
+    (0.01, 0.045),   # x3 - swingarm
+    (-0.01, 0.05),   # x4 - rocker arm length
+    (0.06, 0.10),    # x5 - extension to damper
+    (0.06, 0.11),    # x6 - rear chassis link
+    (-0.08, 0.0),    # Fx
+    (0.0, 0.04),     # Fy
+]
 
-fig.suptitle("Kompresija i sila u opruzi/prigušivaču")
+# run optimization 
+print("Optimizing geometry and F location for damper performance (linear target)...")
+result = differential_evolution(linkage_velocity_fit, bounds, seed=42, maxiter=150, disp=True)
+opt_vars = result.x
+opt_params = opt_vars[:6]
+opt_F = opt_vars[6:]
+print("\n✅ Optimized geometry:", opt_params)
+print("✅ Optimized F point:", opt_F)
+
+# simulate optimized system 
+EF_opt = np.array([np.linalg.norm(calculate_positions(phi, opt_params) - opt_F) for phi in phi2_range])
+v_opt = np.gradient(EF_opt, t_vals)
+
+plt.figure(figsize=(10, 5))
+plt.plot(t_vals, v_target, '--', label='Target velocity (linear)', color='orange')
+plt.plot(t_vals, v_opt, label='Optimized velocity', color='blue')
+plt.xlabel("Time [s]")
+plt.ylabel("Damper Velocity [m/s]")
+plt.title("Final Optimized Damper Velocity vs Target (Linear)")
+plt.grid()
+plt.legend()
 plt.tight_layout()
 plt.show()
 
-# === Skica 4-bar mehanizma ===
-def draw_four_bar_linkage(phi2_angle=np.deg2rad(95), params=params):
+# draw 4-bar
+def draw_four_bar_linkage(phi2=np.deg2rad(95), params=None, F=None):
     x1, x2, x3, x4, x5, x6 = params
     A = np.array([0, 0])
     D = np.array([0.115, 0.0])
-    F = np.array([-0.04, 0.02])
-
-    B_ = A + [x1, 0]
-    B  = B_ + [x2 * np.cos(phi2_angle), x2 * np.sin(phi2_angle)]
-    C  = B  + [x5 * np.cos(phi2_angle), x5 * np.sin(phi2_angle)]
-    E_ = C  + [x3 * np.cos(phi2_angle + np.pi/2), x3 * np.sin(phi2_angle + np.pi/2)]
-    E  = E_ + [x4 * np.cos(phi2_angle + np.pi), x4 * np.sin(phi2_angle + np.pi)]
+    B_ = A + np.array([x1, 0])
+    B  = B_ + x2 * np.array([np.cos(phi2), np.sin(phi2)])
+    C  = B  + x5 * np.array([np.cos(phi2), np.sin(phi2)])
+    E_ = C  + x3 * np.array([np.cos(phi2 + np.pi/2), np.sin(phi2 + np.pi/2)])
+    E  = E_ + x4 * np.array([np.cos(phi2 + np.pi), np.sin(phi2 + np.pi)])
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    def draw_link(p1, p2, label=None, color='k'):
+    def draw(p1, p2, label=None, color='k'):
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], 'o-', color=color)
         if label:
-            mid = (p1 + p2) / 2
-            ax.text(mid[0], mid[1], label, fontsize=9, color=color)
+            ax.text(*(p1 + p2)/2, label, fontsize=9, color=color)
 
-    draw_link(A, B_, "x1")
-    draw_link(B_, B, "x2")
-    draw_link(B, C, "x5")
-    draw_link(C, E_, "x3")
-    draw_link(E_, E, "x4")
-    draw_link(D, C, "x6")
-    draw_link(E, F, "prigušivač", color='blue')
+    draw(A, B_, 'x1')
+    draw(B_, B, 'x2')
+    draw(B, C, 'x5')
+    draw(C, E_, 'x3')
+    draw(E_, E, 'x4')
+    draw(D, C, 'x6')
+    draw(E, F, 'Damper', color='blue')
 
-    # Točke i oznake
-    ax.plot(*F, 'ro', label="Točka F (šasija)")
-    ax.plot(*E, 'bo', label="Točka E (ovjes)")
-    for label, pt in zip(['A', "B'", 'B', 'C', "E'", 'E', 'D', 'F'],
-                         [A, B_, B, C, E_, E, D, F]):
+    # labels
+    for label, pt in zip(['A', "B'", 'B', 'C', "E'", 'E', 'D', 'F'], [A, B_, B, C, E_, E, D, F]):
         ax.text(pt[0], pt[1], label, fontsize=10)
 
     ax.set_aspect('equal')
-    ax.set_title('Skica 4-bar ovjesnog mehanizma (Uni-Trak)')
+    ax.set_title('Optimized 4-Bar Rear Suspension (Uni-Trak)')
     ax.set_xlabel('x [m]')
     ax.set_ylabel('y [m]')
-    ax.legend()
     ax.grid(True)
     plt.tight_layout()
     plt.show()
 
-# Prikaz skice
-draw_four_bar_linkage()
+draw_four_bar_linkage(phi2=np.deg2rad(95), params=opt_params, F=opt_F)
