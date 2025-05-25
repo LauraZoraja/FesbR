@@ -1,146 +1,246 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import differential_evolution
+from scipy.optimize import differential_evolution, minimize, fsolve
 
-# parameters
-k_spring = 15000  # N/m
-c_damper = 1500   # Ns/m
-t_total = 2       # s
+# Constants and parameters
+K_SPRING = 15000  # N/m (spring rate)
+C_DAMPER = 1500   # Ns/m (damping coefficient)
+T_TOTAL = 2       # s (simulation time)
+PHI2_RANGE = np.deg2rad(np.linspace(80, 105, 100))  # Swingarm angle range
+T_VALS = np.linspace(0, T_TOTAL, len(PHI2_RANGE))  # Time values
 
-# motion range 
-phi2_range = np.deg2rad(np.linspace(80, 105, 100))
-t_vals = np.linspace(0, t_total, len(phi2_range))
+# Target parameters 
+A = 0.145  # m/s (constant term for velocity profile)
+B = 0.275  # m/s² (linear term coefficient)
+C = 0.4    # m/s³ (quadratic term coefficient)
+AD_PRIME = 0.115  # m (fixed distance A-D')
+DD_PRIME = 0.025  # m (fixed vertical offset)
+F_POINT = np.array([-0.04, 0.02])  # m (fixed damper chassis mount point)
 
-# kinematics
-def calculate_positions(phi2, params):
-    x1, x2, x3, x4, x5, x6 = params
-    A = np.array([0, 0])
-    B_ = A + np.array([x1, 0])
-    B  = B_ + x2 * np.array([np.cos(phi2), np.sin(phi2)])
-    C  = B  + x5 * np.array([np.cos(phi2), np.sin(phi2)])
-    E_ = C  + x3 * np.array([np.cos(phi2 + np.pi/2), np.sin(phi2 + np.pi/2)])
-    E  = E_ + x4 * np.array([np.cos(phi2 + np.pi), np.sin(phi2 + np.pi)])
-    return E
+class SuspensionOptimizer:
+    def __init__(self):
+        self.optimal_params_linear = [0.10000, 0.02612, 0.01539, -0.00596, 0.09897, 0.09315]
+        self.optimal_params_quadratic = [0.10008, 0.02016, 0.00463, -0.01529, 0.09035, 0.08014]
 
-# target velocity profile
-def desired_velocity_profile(t_vals, profile='quadratic'):
-    if profile == 'linear':
-        return 0.05 + 0.1 * (t_vals / t_vals[-1])
-    elif profile == 'quadratic':
-        return 0.05 + 0.1 * (t_vals / t_vals[-1])**2
-    else:
-        raise ValueError("Unsupported profile type")
+    def calculate_positions(self, phi2, params, phi_guess=None):
+        x1, x2, x3, x4, x5, x6 = params
+        A = np.array([0, 0])
+        D_PRIME = np.array([0, -AD_PRIME])
+        D = D_PRIME + np.array([DD_PRIME, 0])
 
-# use a linear profile
-v_target = desired_velocity_profile(t_vals, profile='linear')
+        B_PRIME = x1 * np.array([np.cos(phi2), -np.sin(phi2)])
+        B = B_PRIME + x2 * np.array([np.cos(phi2), -np.sin(phi2)])
 
-# linkage fit to target velocity
-def linkage_velocity_fit(all_vars):
-    x1, x2, x3, x4, x5, x6, Fx, Fy = all_vars
-    params = [x1, x2, x3, x4, x5, x6]
-    F_point = np.array([Fx, Fy])
+        C = B + x5 * np.array([np.cos(phi2), np.sin(phi2)])
+        def closure_eqs(vars):
+            phi3, phi4 = vars
+            eq1 = x1 * np.cos(phi2) + x2 * np.sin(phi2) + x5 * np.cos(phi3) - x6 * np.cos(phi4) - AD_PRIME
+            eq2 = x1 * np.sin(phi2) - x2 * np.cos(phi2) - x5 * np.sin(phi3) - x6 * np.sin(phi4) - DD_PRIME
+            return [eq1, eq2]
 
-    try:
-        EF_distances = np.array([np.linalg.norm(calculate_positions(phi, params) - F_point) for phi in phi2_range])
-    except:
-        return np.inf
+        if phi_guess is None:
+            phi_guess = [phi2, phi2]
 
-    if np.any(np.isnan(EF_distances)) or np.any(np.isinf(EF_distances)):
-        return np.inf
+        try:
+            phi_sol, info, ier, msg = fsolve(closure_eqs, phi_guess, full_output=True)
+            if ier != 1 or np.any(np.isnan(phi_sol)) or np.any(np.isinf(phi_sol)):
+                return None, None, None, None
+            phi3, phi4 = phi_sol
+        except Exception:
+            return None, None, None, None
 
-    velocities = np.gradient(EF_distances, t_vals)
-    mse = np.mean((velocities - v_target)**2)
-    return mse
+        E = np.array([
+            (x6 + x3) * np.cos(phi4) - x4 * np.sin(phi4) + AD_PRIME,
+            (x6 + x3) * np.sin(phi4) + x4 * np.cos(phi4) + DD_PRIME
+        ])
 
-# bounds
-bounds = [
-    (0.09, 0.145),   # x1 - frame width
-    (-0.015, 0.09), # x2 - pivot offset
-    (0.01, 0.045),   # x3 - swingarm
-    (-0.01, 0.09),   # x4 - rocker arm length
-    (0.06, 0.10),    # x5 - extension to damper
-    (0.06, 0.11),    # x6 - rear chassis link
-    (-0.08, 0.0),    # Fx
-    (0.0, 0.025),     # Fy
-]
+        return E, phi3, phi4, C
 
-# run optimization 
-print("Optimizing geometry and F location for damper performance (linear target)...")
-result = differential_evolution(linkage_velocity_fit, bounds, seed=42, maxiter=300, disp=True)
-opt_vars = result.x
-opt_params = opt_vars[:6]
-opt_F = opt_vars[6:]
-print("\n✅ Optimized geometry:", opt_params)
-print("✅ Optimized F point:", opt_F)
+    def desired_velocity_profile(self, t_vals, profile='quadratic'):
+        if profile == 'linear':
+            return -A - B * (t_vals / T_TOTAL)
+        elif profile == 'quadratic':
+            return -A - B * (t_vals / T_TOTAL) - C * (t_vals / T_TOTAL) ** 2
+        else:
+            raise ValueError("Unsupported profile type")
 
-# simulate optimized system 
-EF_opt = np.array([np.linalg.norm(calculate_positions(phi, opt_params) - opt_F) for phi in phi2_range])
-v_opt = np.gradient(EF_opt, t_vals)
+    def evaluate_suspension(self, params, profile='quadratic'):
+        EF_distances = []
+        valid = True
+        phi_guess = None
 
-plt.figure(figsize=(10, 5))
-plt.plot(t_vals, v_target, '--', label='Target velocity (linear)', color='orange')
-plt.plot(t_vals, v_opt, label='Optimized velocity', color='blue')
-plt.xlabel("Time [s]")
-plt.ylabel("Damper Velocity [m/s]")
-plt.title("Final Optimized Damper Velocity vs Target (Linear)")
-plt.grid()
-plt.legend()
-plt.tight_layout()
-plt.show()
+        for phi2 in PHI2_RANGE:
+            E, phi3, phi4, _ = self.calculate_positions(phi2, params, phi_guess)
+            if E is None:
+                valid = False
+                break
+            phi_guess = [phi3, phi4]
+            EF_distances.append(np.linalg.norm(E - F_POINT))
 
-# forces
-stroke = EF_opt - EF_opt[0]
-F_spring = k_spring * stroke
-F_damper = c_damper * v_opt
-F_total = F_spring + F_damper
+        if not valid or len(EF_distances) != len(PHI2_RANGE):
+            return None, None, None
 
-plt.figure(figsize=(10, 5))
-plt.plot(t_vals, F_total, label='Total Damper Force [N]', color='green')
-plt.plot(t_vals, F_spring, '--', label='Spring Force [N]', color='red')
-plt.plot(t_vals, F_damper, '--', label='Damping Force [N]', color='blue')
-plt.xlabel("Time [s]")
-plt.ylabel("Force [N]")
-plt.title("Forces Acting on the Damper Over Time")
-plt.grid()
-plt.legend()
-plt.tight_layout()
-plt.show()
+        EF_distances = np.array(EF_distances)
+        if np.any(np.isnan(EF_distances)) or np.any(np.isinf(EF_distances)):
+            return None, None, None
 
-# draw 4-bar
-def draw_four_bar_linkage(phi2=np.deg2rad(95), params=None, F=None):
-    x1, x2, x3, x4, x5, x6 = params
-    A = np.array([0, 0])
-    D = np.array([0.115, 0.0])
-    B_ = A + np.array([x1, 0])
-    B  = B_ + x2 * np.array([np.cos(phi2), np.sin(phi2)])
-    C  = B  + x5 * np.array([np.cos(phi2), np.sin(phi2)])
-    E_ = C  + x3 * np.array([np.cos(phi2 + np.pi/2), np.sin(phi2 + np.pi/2)])
-    E  = E_ + x4 * np.array([np.cos(phi2 + np.pi), np.sin(phi2 + np.pi)])
+        EF_distances = np.array(EF_distances)
+        velocities = np.gradient(EF_distances, T_VALS)
+        v_target = self.desired_velocity_profile(T_VALS, profile)
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    def draw(p1, p2, label=None, color='k'):
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], 'o-', color=color)
-        if label:
-            ax.text(*(p1 + p2)/2, label, fontsize=9, color=color)
+        return EF_distances, velocities, v_target
 
-    draw(A, B_, 'x1')
-    draw(B_, B, 'x2')
-    draw(B, C, 'x5')
-    draw(C, E_, 'x3')
-    draw(E_, E, 'x4')
-    draw(D, C, 'x6')
-    draw(E, F, 'Damper', color='blue')
+    def objective_function(self, params, profile='quadratic'):
+        x1, x2, x3, x4, x5, x6 = params
 
-    # labels
-    for label, pt in zip(['A', "B'", 'B', 'C', "E'", 'E', 'D', 'F'], [A, B_, B, C, E_, E, D, F]):
-        ax.text(pt[0], pt[1], label, fontsize=10)
+        # Enforce physical constraints up front
+        if x1 <= 0 or x3 <= 0 or x5 <= 0 or x6 <= 0:
+            return 1e6  # large penalty instead of inf
 
-    ax.set_aspect('equal')
-    ax.set_title('Optimized 4-Bar Rear Suspension (Uni-Trak)')
-    ax.set_xlabel('x [m]')
-    ax.set_ylabel('y [m]')
-    ax.grid(True)
-    plt.tight_layout()
-    plt.show()
+        # Evaluate suspension
+        EF_distances, velocities, v_target = self.evaluate_suspension(params, profile)
 
-draw_four_bar_linkage(phi2=np.deg2rad(95), params=opt_params, F=opt_F)
+        # Fallback in case evaluation failed
+        if EF_distances is None or velocities is None or v_target is None:
+            return 1e6
+
+        # Check for bad numeric values
+        if (
+            np.any(np.isnan(EF_distances)) or np.any(np.isinf(EF_distances)) or
+            np.any(np.isnan(velocities)) or np.any(np.isinf(velocities)) or
+            np.any(np.isnan(v_target)) or np.any(np.isinf(v_target))
+        ):
+            return 1e6
+
+        # Grashof condition
+        L1, L2 = x5, x6
+        L3 = np.sqrt(AD_PRIME**2 + DD_PRIME**2)
+        L4 = x1
+        lengths = sorted([L1, L2, L3, L4])
+        if lengths[0] + lengths[3] > lengths[1] + lengths[2]:
+            return 1e6
+
+        mse = np.mean((velocities - v_target) ** 2)
+        return mse
+
+    #except Exception:
+        # Catch any unexpected errors safely
+        #return 1e6
+
+    def optimize(self, profile='quadratic'):
+        bounds = [
+            (0.09, 0.145),  # x1
+            (-0.015, 0.045),  # x2
+            (0.01, 0.045),  # x3
+            (-0.01, 0.05),  # x4
+            (0.06, 0.10),  # x5
+            (0.06, 0.11),  # x6
+        ]
+
+        x0 = self.optimal_params_linear if profile == 'linear' else self.optimal_params_quadratic
+
+        res = minimize(self.objective_function, x0, args=(profile,), bounds=bounds, method='L-BFGS-B')
+        result = differential_evolution(self.objective_function, bounds, args=(profile,), maxiter=100, polish=False)
+
+        return (res.x, res.fun) if res.fun < result.fun else (result.x, result.fun)
+
+
+    def plot_results(self, params, profile='quadratic'):
+        """Plot the optimization results"""
+        EF_distances, velocities, v_target = self.evaluate_suspension(params, profile)
+        
+        if EF_distances is None:
+            print("Invalid parameters - cannot plot")
+            return
+            
+        # Damper velocity comparison
+        plt.figure(figsize=(12, 5))
+        plt.subplot(1, 2, 1)
+        plt.plot(np.rad2deg(PHI2_RANGE), v_target, '--', label='Target velocity', color='orange')
+        plt.plot(np.rad2deg(PHI2_RANGE), velocities, label='Optimized velocity', color='blue')
+        plt.xlabel("Swingarm angle [deg]")
+        plt.ylabel("Damper Velocity [m/s]")
+        plt.title(f"Damper Velocity vs Target ({profile.capitalize()} Profile)")
+        plt.grid()
+        plt.legend()
+        
+        # Forces calculation
+        stroke = EF_distances - EF_distances[0]
+        F_spring = K_SPRING * stroke
+        F_damper = C_DAMPER * velocities
+        F_total = F_spring + F_damper
+        
+        plt.subplot(1, 2, 2)
+        plt.plot(np.rad2deg(PHI2_RANGE), F_total, label='Total Force [N]', color='green')
+        plt.plot(np.rad2deg(PHI2_RANGE), F_spring, '--', label='Spring Force [N]', color='red')
+        plt.plot(np.rad2deg(PHI2_RANGE), F_damper, '--', label='Damping Force [N]', color='blue')
+        plt.xlabel("Swingarm angle [deg]")
+        plt.ylabel("Force [N]")
+        plt.title("Forces Acting on the Damper")
+        plt.grid()
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+        
+        # Draw linkage at midpoint position
+        self.draw_linkage(params, phi2=np.deg2rad(92.5))
+
+    def draw_linkage(self, params, phi2=np.deg2rad(90)):
+        """Draw the four-bar linkage at specified swingarm angle"""
+        x1, x2, x3, x4, x5, x6 = params
+        A = np.array([0, 0])
+        D = np.array([AD_PRIME, -DD_PRIME])
+        D_prime = D + np.array([0, DD_PRIME])
+        
+        # Calculate all points
+        B_prime = A + np.array([x1, 0])
+        B = B_prime + x2 * np.array([-np.sin(phi2), np.cos(phi2)])
+        C = B + x5 * np.array([np.cos(phi2), np.sin(phi2)])
+        
+        E, phi3, phi4, _ = self.calculate_positions(phi2, params)
+        if E is None:
+            print("Cannot draw - invalid configuration at this angle")
+            return
+            
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Draw all links
+        def draw_link(p1, p2, label=None, color='k', linestyle='-'):
+            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], linestyle, color=color, linewidth=2)
+            if label:
+                ax.text((p1[0]+p2[0])/2, (p1[1]+p2[1])/2, label, 
+                       fontsize=10, color=color, ha='center', va='center')
+        
+        draw_link(A, B_prime, 'x1')
+        draw_link(B_prime, B, 'x2')
+        draw_link(B, C, 'x5')
+        draw_link(C, E, 'x3+x4')
+        draw_link(D, C, 'x6')
+        draw_link(E, F_POINT, 'Damper', color='blue')
+        
+        # Draw rocker arm
+        draw_link(D_prime, C, '', color='gray', linestyle='--')
+        draw_link(D_prime, E, '', color='gray', linestyle='--')
+        
+        # Label points
+        for label, pt in zip(['A', "B'", 'B', 'C', 'E', 'D', "D'", 'F'], 
+                           [A, B_prime, B, C, E, D, D_prime, F_POINT]):
+            ax.text(pt[0], pt[1], label, fontsize=12, ha='center', va='center',
+                   bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+        
+        ax.set_aspect('equal')
+        ax.set_title(f'Optimized 4-Bar Rear Suspension (φ={np.rad2deg(phi2):.1f}°)')
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        ax.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+# Run optimization and analysis
+if __name__ == "__main__":
+    optimizer = SuspensionOptimizer()
+    
+    print("\nOptimizing for linear velocity profile...")
+    opt_params_lin, _ = optimizer.optimize(profile='linear')
+    print("Optimized parameters:", opt_params_lin)
+    optimizer.plot_results(opt_params_lin, profile='linear')
